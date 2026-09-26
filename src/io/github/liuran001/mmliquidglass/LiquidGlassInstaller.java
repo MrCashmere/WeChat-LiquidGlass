@@ -43,6 +43,8 @@ final class LiquidGlassInstaller {
     private static final int[] sLoc = new int[2];
     /** Scratch for host-relative positions; every use is on the UI thread. */
     private static final int[] sPos = new int[2];
+    /** Scratch for a tab's drawn-content bounds; UI thread only. */
+    private static final int[] sLeaf = new int[2];
     private static boolean sKeepFailed;
     private static WeakReference<Activity> sActivityRef = new WeakReference<>(null);
     private static WeakReference<LiquidGlassHostLayout> sHostRef = new WeakReference<>(null);
@@ -2340,6 +2342,29 @@ final class LiquidGlassInstaller {
                 return;
             }
             int top = sPos[1] + inset;
+            // The column's own top is a trustworthy anchor only while the whole
+            // column fits inside the pill. Hosts cut that box to suit
+            // themselves — QQ restores its old docked height on relayout, and a
+            // ROM handing the bar extra room under the gesture area moves the
+            // box without moving the tabs inside it. Anchoring on the box then
+            // carries the droplet down with it and leaves it sitting below the
+            // icon it is meant to mark, which is the "droplet hangs low"
+            // report. Inside a column that does fit, the drawn content — icon
+            // plus label — is what the droplet actually marks, so it is
+            // measured and centred on instead.
+            //
+            // The two anchors agree exactly whenever the content is centred in
+            // its column, which is the ordinary case, so this only ever moves
+            // the droplet when the box and its content have drifted apart.
+            // Falls back to the box anchor if the content cannot be measured.
+            sLeaf[0] = Integer.MAX_VALUE;
+            sLeaf[1] = 0;
+            leafBounds(tab, 0, sLeaf);
+            boolean contentKnown = sLeaf[0] < sLeaf[1];
+            boolean columnFits = tab.getHeight() <= pillBottom - pillTop;
+            if (contentKnown && columnFits) {
+                top = sPos[1] + (sLeaf[0] + sLeaf[1]) / 2 - h / 2;
+            }
             if (top + h > pillBottom) {
                 top = pillBottom - h;
             }
@@ -2361,10 +2386,15 @@ final class LiquidGlassInstaller {
                 LiquidGlassModule.log(android.util.Log.INFO,
                         "droplet placed: tab=" + sPos[0] + "," + sPos[1]
                                 + " size=" + w + "x" + h
+                                + " top=" + top
                                 + " pill=" + pillTop + ".." + pillBottom
                                 + " hostPad=" + host.getPaddingLeft()
                                 + "," + host.getPaddingTop()
-                                + " tabH=" + tab.getHeight());
+                                + " tabH=" + tab.getHeight()
+                                + " content=" + (contentKnown
+                                        ? sLeaf[0] + ".." + sLeaf[1] : "?")
+                                + " anchor=" + (contentKnown && columnFits
+                                        ? "content" : "column"));
             }
         } catch (Throwable t) {
             LiquidGlassModule.logErr("droplet sizing failed", t);
