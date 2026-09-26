@@ -65,6 +65,16 @@ QQ 同一个安装包里带了新旧两套底栏，服务端开关 `tab_layout_9
 
 产物：`LiquidGlass-vX.Y.Z.apk`（自动生成 debug 签名）。
 
+Windows 上等价的一条命令（同一套流水线，只是换成 Windows 版 build-tools，
+并绕开 Git Bash 的路径改写）：
+
+```bash
+python build-win.py --tools <下载并解压好的工具目录>
+```
+
+需先备好 `plat/android-34/android.jar`、`bt/android-14/{aapt2.exe,zipalign.exe,lib/{d8.jar,apksigner.jar}}`
+和 `xapi/classes.jar`（Windows 版 build-tools 见 `dl.google.com/android/repository/build-tools_r34-windows.zip`）。
+
 ### 可调参数
 
 | 参数 | 位置 | 默认 |
