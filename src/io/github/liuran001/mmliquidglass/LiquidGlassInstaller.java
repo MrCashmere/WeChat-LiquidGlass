@@ -199,7 +199,6 @@ final class LiquidGlassInstaller {
 
     /** Drops references to a previous Activity's views so a relaunch reinstalls. */
     private static void resetState(String why) {
-        Trace.e("reset", "resetState() from: " + why);
         sHostRef = new WeakReference<>(null);
         sTabViewRef = new WeakReference<>(null);
         sGlassRef = new WeakReference<>(null);
@@ -361,13 +360,6 @@ final class LiquidGlassInstaller {
         sLastIndex = -1;
 
         TabBarBridge.tryHookPager(backdrop);
-        Trace.e("install", "installed\n    " + TabBarBridge.rowDigest(tabRow)
-                + "\n    " + TabBarBridge.pagerDigest(backdrop)
-                + "\n    hostPad=" + host.getPaddingLeft() + "," + host.getPaddingTop()
-                + " barHeight=" + barHeight
-                + " navInset=" + navigationInset
-                + " barOffsetDp=" + GlassConfig.barOffsetDp
-                + " pagerRewrite=" + GlassConfig.pagerRewrite);
 
         // Cosmetic cleanup cannot invalidate the structural install. If an app
         // skin changes one of these details, keep the functional floating bar
@@ -1303,7 +1295,6 @@ final class LiquidGlassInstaller {
             return;
         }
         v.setVisibility(View.GONE);
-        Trace.e("chrome", "hid " + v.getClass().getSimpleName() + " (app re-lit it)");
         if (report && !sBlurRelit) {
             sBlurRelit = true;
             LiquidGlassModule.log(android.util.Log.INFO,
@@ -1539,27 +1530,41 @@ final class LiquidGlassInstaller {
                 host.setLayoutParams(lp);
             }
 
+            // A fingerprint change does not mean a different row: QQ swaps a
+            // tab's icon or its red dot in place, which moves the child
+            // identities the signature is built from while the row object the
+            // droplet is anchored to stays exactly the same. Only a genuinely
+            // different object costs the droplet its state.
+            boolean rowReplaced = tabRow != sTabRowRef.get();
             sTabRowRef = new WeakReference<>(tabRow);
             sTabStructureSignature = tabStructureSignature(tabRow);
-            View droplet = sDropletRef.get();
-            if (droplet instanceof DropletPanel) {
-                ((DropletPanel) droplet).setTabRow(tabRow);
+            if (rowReplaced) {
+                View droplet = sDropletRef.get();
+                if (droplet instanceof DropletPanel) {
+                    ((DropletPanel) droplet).setTabRow(tabRow);
+                }
+                if (sDrag != null) {
+                    sDrag.setTabRow(tabRow);
+                }
+                // The next pre-draw runs after the requested layout and snaps
+                // the droplet to the selected tab using the new geometry.
+                sLastIndex = -1;
+            } else if (sLastIndex >= 0) {
+                // Same row, and the droplet is still mid-flight on its way to
+                // the tab the user picked. Re-measure it against the new
+                // geometry and otherwise leave it alone. setTabRow() here would
+                // trip its press springs back to rest (scale 1.41 -> 1), and
+                // -1 below would make the next selection read as a first one
+                // and snap it out of its animation -- those two together are
+                // the flash.
+                syncDropletSize(sLastIndex);
             }
-            if (sDrag != null) {
-                sDrag.setTabRow(tabRow);
-            }
-
-            // The next pre-draw runs after the requested layout and snaps the
-            // droplet to the selected tab using the new geometry.
-            Trace.e("struct", "rebound to " + tabRow.getClass().getSimpleName()
-                    + " — droplet snaps, sLastIndex reset to -1"
-                    + " (this is the flash if it happens on a tap)");
-            sLastIndex = -1;
             tabRow.requestLayout();
             tabView.requestLayout();
             host.requestLayout();
             LiquidGlassModule.log(android.util.Log.INFO,
                     "tab structure rebound: row=" + tabRow.getClass().getName()
+                            + " replaced=" + rowReplaced
                             + " children=" + tabRow.getChildCount()
                             + " hostWidth=" + (lp == null ? 0 : lp.width)
                             + " barHeight=" + sBarHeight);
@@ -1636,9 +1641,6 @@ final class LiquidGlassInstaller {
                     int prev = sLastIndex;
                     boolean first = prev < 0;
                     sLastIndex = sel;
-                    Trace.e("sel", "selection " + prev + " -> " + sel
-                            + (first ? "  (first — droplet snaps, no travel)"
-                                     : "  (droplet travels)"));
                     syncDropletSize(sel);
                     if (sDrag != null) {
                         // KernelSU animates programmatic switches the same way as
@@ -2294,12 +2296,6 @@ final class LiquidGlassInstaller {
         if (host == null || host.getParent() == null || tabView.getParent() != host) {
             // Not ours (yet). Either the first call of this process, or a fresh
             // LauncherUI instance after the old one was destroyed.
-            Trace.e("tab", "onTabChanged index=" + index
-                    + " thiz=" + tabView.getClass().getSimpleName()
-                    + " -> REINSTALL (host=" + (host == null ? "null" : "ok")
-                    + " attached=" + (host != null && host.isAttachedToWindow())
-                    + " parent=" + (tabView.getParent() == null ? "null"
-                            : tabView.getParent().getClass().getSimpleName()) + ")");
             if (tabView instanceof ViewGroup && tabView.getParent() != null) {
                 tabView.post(() -> {
                     try {
@@ -2315,13 +2311,9 @@ final class LiquidGlassInstaller {
         LiquidGlassHostLayout installedHost = host;
         installedHost.post(() -> {
             if (scheduleTabStructureRefreshIfNeeded(installedHost)) {
-                Trace.e("tab", "onTabChanged index=" + index
-                        + " -> a structural refresh is in flight, droplet waits");
                 return;
             }
             int slot = resolveTabSlot(index);
-            Trace.e("tab", "onTabChanged index=" + index + " -> slot " + slot
-                    + (slot < 0 ? " (unresolved)" : ""));
             if (slot < 0) {
                 return;
             }
@@ -2432,13 +2424,6 @@ final class LiquidGlassInstaller {
                                 + " anchor=" + (contentKnown && columnFits
                                         ? "content" : "column"));
             }
-            Trace.e("dropY", "place slot=" + index + " tab=" + sPos[0] + "," + sPos[1]
-                    + " " + w + "x" + h + " top=" + top
-                    + " pill=" + pillTop + ".." + pillBottom
-                    + " tabH=" + tab.getHeight()
-                    + " content=" + (contentKnown ? sLeaf[0] + ".." + sLeaf[1] : "?")
-                    + " anchor=" + (contentKnown && columnFits ? "content" : "column")
-                    + " baseY=" + sDropletBaseY);
         } catch (Throwable t) {
             LiquidGlassModule.logErr("droplet sizing failed", t);
         }
