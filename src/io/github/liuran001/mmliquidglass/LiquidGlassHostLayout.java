@@ -194,6 +194,7 @@ final class LiquidGlassHostLayout extends FrameLayout {
     @Override
     public boolean onInterceptTouchEvent(android.view.MotionEvent ev) {
         protectGestureFromAncestors(ev);
+        maybeArmTraceHold(ev);
         try {
             if (mDragHandler != null && mDragHandler.onIntercept(ev)) {
                 return true;
@@ -578,8 +579,78 @@ final class LiquidGlassHostLayout extends FrameLayout {
 
     /* ---------------- liquid motion ---------------- */
 
+    /* ---------------- trace retrieval ---------------- */
+
+    /** Pending long-press-to-open-trace, or null. */
+    private Runnable mTraceHold;
+    private float mHoldX;
+
+    /**
+     * Diagnostic hook: holding a finger on the droplet for 0.6s opens the
+     * recorded event log.
+     *
+     * <p>Only the droplet is armed, never one of the app's tabs — the droplet's
+     * only gesture is the drag, so nothing the host owns is taken away from it.
+     * The log is also written to a file in Downloads, for the case where the
+     * screen is easier to read from than the clipboard.
+     */
+    private void maybeArmTraceHold(android.view.MotionEvent ev) {
+        switch (ev.getActionMasked()) {
+            case android.view.MotionEvent.ACTION_DOWN: {
+                if (!overDropletColumn(ev)) {
+                    return;
+                }
+                mHoldX = ev.getX();
+                if (mTraceHold == null) {
+                    mTraceHold = () -> {
+                        if (isAttachedToWindow()) {
+                            Trace.show(getContext());
+                        }
+                    };
+                }
+                postDelayed(mTraceHold, 600L);
+                break;
+            }
+            case android.view.MotionEvent.ACTION_MOVE: {
+                if (mTraceHold != null
+                        && Math.abs(ev.getX() - mHoldX) > mTouchSlop * 2f) {
+                    cancelTraceHold();
+                }
+                break;
+            }
+            case android.view.MotionEvent.ACTION_UP:
+            case android.view.MotionEvent.ACTION_CANCEL:
+                cancelTraceHold();
+                break;
+            default:
+                break;
+        }
+    }
+
+    private void cancelTraceHold() {
+        if (mTraceHold != null) {
+            removeCallbacks(mTraceHold);
+        }
+    }
+
+    private boolean overDropletColumn(android.view.MotionEvent ev) {
+        for (int i = 0; i < getChildCount(); i++) {
+            View c = getChildAt(i);
+            if (!(c instanceof DropletPanel)) {
+                continue;
+            }
+            float left = c.getLeft() + c.getTranslationX();
+            ViewGroup.LayoutParams lp = c.getLayoutParams();
+            float width = lp != null && lp.width > 0 ? lp.width : c.getWidth();
+            return ev.getX() >= left && ev.getX() <= left + width;
+        }
+        return false;
+    }
+
     private void playRevealAnimation() {
         try {
+            Trace.e("reveal", "playRevealAnimation — the bar re-enters from"
+                    + " alpha 0 / scaleY 0.86 (reads as a flash if it runs on a tap)");
             setPivotX(getWidth() * 0.5f);
             setPivotY(getHeight());
             setScaleY(0.86f);

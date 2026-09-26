@@ -604,14 +604,30 @@ final class TabBarBridge {
                         return chain.proceed(); // a pager we cannot ask
                     }
                     int distance = visibleDistance(target, current);
+                    Trace.e("pager", "tap -> setCurrentItem(" + target + ", false)"
+                            + " current=" + current + " distance=" + distance
+                            + " mode=" + GlassConfig.pagerRewrite
+                            + "\n    " + rowDigest(LiquidGlassInstaller.currentTabRow())
+                            + "\n    " + pagerDigest(self));
                     if (distance < 0) {
                         // A hidden tab whose page does not map onto the visible
                         // slots: nothing here can tell what the user sees as
                         // adjacent, so the move is left entirely to the app.
+                        Trace.e("pager", "  -> unmappable, left to the app");
                         return chain.proceed();
                     }
                     if (distance == 0) {
                         return chain.proceed(); // the pager's own no-op
+                    }
+                    if (GlassConfig.pagerRewrite <= 0) {
+                        Trace.e("pager", "  -> mode 0: the app's own cut stands");
+                        return chain.proceed();
+                    }
+                    if (distance > 1 && GlassConfig.pagerRewrite < 2) {
+                        Trace.e("pager", "  -> mode " + GlassConfig.pagerRewrite
+                                + ": a jump over " + (distance - 1)
+                                + " visible page(s) is left to the app");
+                        return chain.proceed();
                     }
                     // This call is the live intent: whatever an earlier jump was
                     // still holding back ends here.
@@ -621,6 +637,8 @@ final class TabBarBridge {
                         // slide passes over; otherwise its own hard cut.
                         if (!(self instanceof ViewGroup)
                                 || !holdIntermediateSettles((ViewGroup) self)) {
+                            Trace.e("pager", "  -> long jump refused the filter,"
+                                    + " keeping the app's hard cut");
                             if (!sFilterRefused) {
                                 sFilterRefused = true;
                                 LiquidGlassModule.log(android.util.Log.WARN,
@@ -699,6 +717,96 @@ final class TabBarBridge {
                         + " of " + tabCount(tabRow) + " visible / "
                         + tabRow.getChildCount() + " laid out");
         return Math.abs(targetSlot - currentSlot);
+    }
+
+    /* ---------------- diagnostics ---------------- */
+
+    /**
+     * Compact, human-readable picture of the bar as the app currently has it.
+     *
+     * <p>Carries the two numbers nothing else can settle: how many children the
+     * row has, and how many of them the user can see. A hidden tab that stays
+     * as a {@code GONE} child keeps those apart; one that was removed or merely
+     * turned {@code INVISIBLE} does not — and each of those needs a different
+     * reading of the page numbers, so the answer has to come off the device.
+     */
+    static String rowDigest(ViewGroup row) {
+        if (row == null) {
+            return "row=null";
+        }
+        StringBuilder b = new StringBuilder();
+        b.append("row=").append(row.getClass().getSimpleName())
+                .append(" children=").append(row.getChildCount())
+                .append(" visible=").append(tabCount(row))
+                .append(" w=").append(row.getWidth())
+                .append(" h=").append(row.getHeight());
+        int shown = 0;
+        for (int i = 0; i < row.getChildCount(); i++) {
+            View c = row.getChildAt(i);
+            b.append("\n      c").append(i).append('{')
+                    .append(c.getClass().getSimpleName())
+                    .append(" vis=").append(visName(c.getVisibility()))
+                    .append(" sel=").append(c.isSelected() ? 1 : 0)
+                    .append(" slot=").append(c.getVisibility() == View.GONE ? "-" : shown)
+                    .append(" x=").append(c.getLeft())
+                    .append(" w=").append(c.getWidth())
+                    .append(" lp=").append(c.getLayoutParams() == null
+                            ? "null" : System.identityHashCode(c.getLayoutParams()) & 0xffff)
+                    .append(" tag=").append(c.getTag())
+                    .append('}');
+            if (c.getVisibility() != View.GONE) {
+                shown++;
+            }
+        }
+        return b.toString();
+    }
+
+    /**
+     * The pager's own numbering next to the bar's.
+     *
+     * <p>{@code items} is the page count; {@code visible} in the row digest is
+     * the tab count. When those two disagree, a hidden tab is still a page —
+     * which is the whole reason a tap between two neighbours can look like a
+     * jump over several.
+     */
+    static String pagerDigest(Object pager) {
+        if (pager == null) {
+            return "pager=null";
+        }
+        StringBuilder b = new StringBuilder();
+        b.append("pager=").append(pager.getClass().getSimpleName())
+                .append(" current=").append(currentItem(pager));
+        if (pager instanceof ViewGroup) {
+            b.append(" children=").append(((ViewGroup) pager).getChildCount());
+        }
+        Object adapter = null;
+        try {
+            java.lang.reflect.Method m = pager.getClass().getMethod("getAdapter");
+            adapter = m.invoke(pager);
+        } catch (Throwable ignored) {
+        }
+        if (adapter != null) {
+            try {
+                java.lang.reflect.Method m = adapter.getClass().getMethod("getItemCount");
+                b.append(" items=").append(m.invoke(adapter));
+            } catch (Throwable ignored) {
+                b.append(" items=?");
+            }
+        }
+        return b.toString();
+    }
+
+    private static String visName(int vis) {
+        switch (vis) {
+            case View.VISIBLE:
+                return "V";
+            case View.INVISIBLE:
+                return "I";
+            case View.GONE:
+                return "G";
+            default:
+                return Integer.toString(vis);
+        }
     }
 
     /* ---------------- long jump: hold back the intermediate settles -------- */
@@ -801,6 +909,8 @@ final class TabBarBridge {
                         // with this settle is its own business, but it is the
                         // one event the top bar is rebuilt from, so it is worth
                         // a line when it goes wrong on a device.
+                        Trace.e("settle", "page " + chain.getArg(0)
+                                + " settled (host's own)");
                         LiquidGlassModule.log(android.util.Log.INFO,
                                 "settle of page " + chain.getArg(0));
                     }
@@ -839,6 +949,9 @@ final class TabBarBridge {
                 ready = false;
             }
         }
+        Trace.e("filter", "settle filter " + (ready ? "ready" : "REFUSED")
+                + " over " + listeners.size() + " listener(s), filtered="
+                + sFilteredListeners.size() + " -> " + (ready ? "slide" : "hard cut"));
         return ready;
     }
 

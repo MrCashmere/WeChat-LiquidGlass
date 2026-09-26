@@ -128,6 +128,10 @@ final class DropletDragController implements LiquidGlassHostLayout.DragHandler {
         mLastSampleMs = 0L;
         mLastFrameNs = 0L;
         float max = tabCount(tabRow) - 1f;
+        Trace.e("drop", "setTabRow SNAP: value " + mValue.value() + "->"
+                + clamp(mValue.value(), 0f, max)
+                + " press " + mPress.value() + "->0 scale " + mScaleX.value() + "->1"
+                + "  (an instant reset to the resting shape)");
         mValue.snapTo(clamp(mValue.value(), 0f, max));
         mVelocity.snapTo(0f);
         mPress.snapTo(0f);
@@ -144,19 +148,25 @@ final class DropletDragController implements LiquidGlassHostLayout.DragHandler {
      * the droplet out from under the finger.
      */
     void animateToIndex(int index, boolean immediate) {
-        if (mDragging) {
-            return;
-        }
         ViewGroup tabRow = mTabRowRef.get();
         float target = clamp(index, 0f, tabCount(tabRow) - 1f);
+        String state = " idx=" + index + " immediate=" + immediate
+                + " v=" + mValue.value() + "->" + target
+                + " press=" + mPress.value() + " scale=" + mScaleX.value();
+        if (mDragging) {
+            Trace.e("drop", "animateToIndex IGNORED (mid-drag)" + state);
+            return;
+        }
         // Releasing a drag already aimed the spring here, and the resulting
         // performClick() bounces the selection straight back at us. Without this
         // the droplet pops a second time after it has settled — KernelSU avoids
         // it with a MutatorMutex, which the View world has no equivalent of.
         if (!immediate && Math.abs(mValue.target() - target) < 0.01f) {
+            Trace.e("drop", "animateToIndex already aimed there, no-op" + state);
             return;
         }
         if (immediate) {
+            Trace.e("drop", "animateToIndex SNAPS (no travel, shape reset)" + state);
             mValue.snapTo(target);
             mVelocity.snapTo(0f);
             mPress.snapTo(0f);
@@ -165,6 +175,7 @@ final class DropletDragController implements LiquidGlassHostLayout.DragHandler {
             apply();
             return;
         }
+        Trace.e("drop", "animateToIndex travels" + state);
         press();
         mValue.animateTo(target);
         mVelocity.animateTo(0f);

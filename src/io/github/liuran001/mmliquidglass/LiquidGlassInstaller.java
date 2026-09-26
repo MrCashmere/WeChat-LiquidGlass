@@ -175,7 +175,7 @@ final class LiquidGlassInstaller {
                 return;
             }
             if (live != null) {
-                resetState();
+                resetState("stale host from a previous window");
             }
             ViewGroup tabView = TabBarBridge.locateTabView(decor);
             if (tabView == null) {
@@ -198,7 +198,8 @@ final class LiquidGlassInstaller {
     }
 
     /** Drops references to a previous Activity's views so a relaunch reinstalls. */
-    private static void resetState() {
+    private static void resetState(String why) {
+        Trace.e("reset", "resetState() from: " + why);
         sHostRef = new WeakReference<>(null);
         sTabViewRef = new WeakReference<>(null);
         sGlassRef = new WeakReference<>(null);
@@ -360,6 +361,13 @@ final class LiquidGlassInstaller {
         sLastIndex = -1;
 
         TabBarBridge.tryHookPager(backdrop);
+        Trace.e("install", "installed\n    " + TabBarBridge.rowDigest(tabRow)
+                + "\n    " + TabBarBridge.pagerDigest(backdrop)
+                + "\n    hostPad=" + host.getPaddingLeft() + "," + host.getPaddingTop()
+                + " barHeight=" + barHeight
+                + " navInset=" + navigationInset
+                + " barOffsetDp=" + GlassConfig.barOffsetDp
+                + " pagerRewrite=" + GlassConfig.pagerRewrite);
 
         // Cosmetic cleanup cannot invalidate the structural install. If an app
         // skin changes one of these details, keep the functional floating bar
@@ -378,8 +386,8 @@ final class LiquidGlassInstaller {
         // why), but QQ already lays its own decor out edge to edge, so the
         // pill's parent does reach under the gesture bar and the correction is
         // owed all the same.
-        boolean insetCounts = extendUnderNavBar(ctx)
-                || LiquidGlassModule.app() == HostApp.QQ;
+        boolean insetCounts = GlassConfig.navExtension > 0
+                && (extendUnderNavBar(ctx) || LiquidGlassModule.app() == HostApp.QQ);
         if (insetCounts) {
             hostLp.bottomMargin = bottomOffset - shadowPad + navigationInset;
             host.setLayoutParams(hostLp);
@@ -1295,6 +1303,7 @@ final class LiquidGlassInstaller {
             return;
         }
         v.setVisibility(View.GONE);
+        Trace.e("chrome", "hid " + v.getClass().getSimpleName() + " (app re-lit it)");
         if (report && !sBlurRelit) {
             sBlurRelit = true;
             LiquidGlassModule.log(android.util.Log.INFO,
@@ -1542,6 +1551,9 @@ final class LiquidGlassInstaller {
 
             // The next pre-draw runs after the requested layout and snaps the
             // droplet to the selected tab using the new geometry.
+            Trace.e("struct", "rebound to " + tabRow.getClass().getSimpleName()
+                    + " — droplet snaps, sLastIndex reset to -1"
+                    + " (this is the flash if it happens on a tap)");
             sLastIndex = -1;
             tabRow.requestLayout();
             tabView.requestLayout();
@@ -1621,8 +1633,12 @@ final class LiquidGlassInstaller {
                 ViewGroup tabRow = sTabRowRef.get();
                 int sel = visibleTabSelection(tabRow);
                 if (sel >= 0 && sel != sLastIndex) {
-                    boolean first = sLastIndex < 0;
+                    int prev = sLastIndex;
+                    boolean first = prev < 0;
                     sLastIndex = sel;
+                    Trace.e("sel", "selection " + prev + " -> " + sel
+                            + (first ? "  (first — droplet snaps, no travel)"
+                                     : "  (droplet travels)"));
                     syncDropletSize(sel);
                     if (sDrag != null) {
                         // KernelSU animates programmatic switches the same way as
@@ -2272,12 +2288,18 @@ final class LiquidGlassInstaller {
     static void onTabChanged(View tabView, int index) {
         LiquidGlassHostLayout host = sHostRef.get();
         if (host != null && !host.isAttachedToWindow()) {
-            resetState();
+            resetState("host no longer attached, seen from onTabChanged");
             host = null;
         }
         if (host == null || host.getParent() == null || tabView.getParent() != host) {
             // Not ours (yet). Either the first call of this process, or a fresh
             // LauncherUI instance after the old one was destroyed.
+            Trace.e("tab", "onTabChanged index=" + index
+                    + " thiz=" + tabView.getClass().getSimpleName()
+                    + " -> REINSTALL (host=" + (host == null ? "null" : "ok")
+                    + " attached=" + (host != null && host.isAttachedToWindow())
+                    + " parent=" + (tabView.getParent() == null ? "null"
+                            : tabView.getParent().getClass().getSimpleName()) + ")");
             if (tabView instanceof ViewGroup && tabView.getParent() != null) {
                 tabView.post(() -> {
                     try {
@@ -2293,9 +2315,13 @@ final class LiquidGlassInstaller {
         LiquidGlassHostLayout installedHost = host;
         installedHost.post(() -> {
             if (scheduleTabStructureRefreshIfNeeded(installedHost)) {
+                Trace.e("tab", "onTabChanged index=" + index
+                        + " -> a structural refresh is in flight, droplet waits");
                 return;
             }
             int slot = resolveTabSlot(index);
+            Trace.e("tab", "onTabChanged index=" + index + " -> slot " + slot
+                    + (slot < 0 ? " (unresolved)" : ""));
             if (slot < 0) {
                 return;
             }
@@ -2406,6 +2432,13 @@ final class LiquidGlassInstaller {
                                 + " anchor=" + (contentKnown && columnFits
                                         ? "content" : "column"));
             }
+            Trace.e("dropY", "place slot=" + index + " tab=" + sPos[0] + "," + sPos[1]
+                    + " " + w + "x" + h + " top=" + top
+                    + " pill=" + pillTop + ".." + pillBottom
+                    + " tabH=" + tab.getHeight()
+                    + " content=" + (contentKnown ? sLeaf[0] + ".." + sLeaf[1] : "?")
+                    + " anchor=" + (contentKnown && columnFits ? "content" : "column")
+                    + " baseY=" + sDropletBaseY);
         } catch (Throwable t) {
             LiquidGlassModule.logErr("droplet sizing failed", t);
         }
