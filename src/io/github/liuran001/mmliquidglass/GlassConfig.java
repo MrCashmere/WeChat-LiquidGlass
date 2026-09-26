@@ -23,19 +23,21 @@ final class GlassConfig {
      * How far a tab tap may be turned from the app's instant cut into a slide.
      *
      * <pre>
-     * 0  never — the app's own setCurrentItem is left exactly as written
-     * 1  only between tabs the user sees as neighbours (default)
+     * 0  never — the app's own setCurrentItem is left exactly as written (default)
+     * 1  only between tabs the user sees as neighbours
      * 2  also over the pages in between, held back from the host
      * </pre>
      *
-     * <p>1 is the default because the neighbours case is the shape the hosts'
-     * own page-change handling was written for, and it is the case that fixes
-     * WeChat's vanishing top-bar text. 2 makes a long jump slide too, but it
-     * has to hide the pages it passes from the host, and that is the one thing
-     * here capable of stranding the host's own bar mid-animation. Exposed so
-     * the three can be told apart on a device without a rebuild.
+     * <p>0 is the default. Turning a tap into a slide is a rewrite of what the
+     * host asked for, and on the reported device every rewrite — neighbour or
+     * long jump — leaves the host's own bar mid-animation, which shows up as
+     * the bar flashing back to its resting shape. Since the rewrite is only
+     * ever cosmetic, leaving the app's own cut alone is the safe default; 1 and
+     * 2 are kept because 1 is what restores WeChat's vanishing top-bar text,
+     * and both are worth being able to tell apart on a device without a
+     * rebuild.
      */
-    static volatile int pagerRewrite = 1;
+    static volatile int pagerRewrite = 0;
 
     /**
      * Whether the module may reshape the window for the floating bar.

@@ -30,6 +30,16 @@ final class LiquidGlassHostLayout extends FrameLayout {
     private static final int BLUR_RADIUS_LEGACY = 3;
     private static final float SATURATION_BOOST = 1.08f;
 
+    /**
+     * Whether this process has already shown the bar's entrance.
+     *
+     * <p>Static on purpose: the question is about the process, not about one
+     * host instance. {@code install()} builds a fresh host every time it runs,
+     * so an instance flag would read false on every rebuild and the flash would
+     * come straight back.
+     */
+    private static boolean sRevealDone;
+
     private final ViewGroup mSampleRoot;
     private final float mDensity;
     private boolean mDarkMode;
@@ -648,6 +658,22 @@ final class LiquidGlassHostLayout extends FrameLayout {
     }
 
     private void playRevealAnimation() {
+        // The entrance belongs to the process, not to the host instance.
+        // install() builds a new host every time it runs, and on QQ a page
+        // switch can re-run it; replaying alpha 0 -> 1 over 380ms at that
+        // moment is exactly "the bar flashes back to its resting shape" on a
+        // tap. A rebuild is not an entrance, so it is not given one, and the
+        // fact that it happened is written out without waiting to be asked.
+        if (sRevealDone) {
+            setAlpha(1f);
+            setScaleY(1f);
+            Trace.e("reveal", "skipped: the bar was already revealed in this"
+                    + " process, so this install is a rebuild, not an entrance");
+            Trace.autoExport(getContext(),
+                    "the bar was rebuilt instead of opened (this is the flash)");
+            return;
+        }
+        sRevealDone = true;
         try {
             Trace.e("reveal", "playRevealAnimation — the bar re-enters from"
                     + " alpha 0 / scaleY 0.86 (reads as a flash if it runs on a tap)");

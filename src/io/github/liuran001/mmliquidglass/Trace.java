@@ -51,6 +51,10 @@ final class Trace {
     private static String sHeader = "(no header yet)";
     private static boolean sHeaderDone;
 
+    /** Automatic writes per process; a rebuild storm must not fill Downloads. */
+    private static final int AUTO_EXPORT_MAX = 3;
+    private static int sAutoExports;
+
     private Trace() {
     }
 
@@ -85,8 +89,10 @@ final class Trace {
         sHeaderDone = true;
         StringBuilder b = new StringBuilder();
         b.append("=== LiquidGlass trace ===\n");
-        b.append("build        : v0.2.5-diag  pagerRewrite=")
-                .append(GlassConfig.pagerRewrite).append('\n');
+        b.append("build        : v0.2.6  pagerRewrite=")
+                .append(GlassConfig.pagerRewrite)
+                .append(" navExtension=").append(GlassConfig.navExtension)
+                .append('\n');
         b.append("device       : ").append(Build.MANUFACTURER).append(' ')
                 .append(Build.MODEL).append(" | ").append(Build.DISPLAY).append('\n');
         b.append("android      : ").append(Build.VERSION.RELEASE)
@@ -193,6 +199,28 @@ final class Trace {
             e("export", "internal file write failed: " + t);
         }
         return null;
+    }
+
+    /**
+     * Writes the buffer out once, on the module's own initiative.
+     *
+     * <p>The event that matters most is one the user only ever sees as a flash,
+     * with no moment to spare for a long press: a rebuild of the bar. So that
+     * one case writes itself out, capped per process so a bar that rebuilds
+     * every frame cannot fill the Downloads folder.
+     */
+    static void autoExport(Context ctx, String reason) {
+        if (sAutoExports >= AUTO_EXPORT_MAX) {
+            return;
+        }
+        sAutoExports++;
+        e("export", "auto " + sAutoExports + "/" + AUTO_EXPORT_MAX
+                + " because " + reason);
+        try {
+            export(ctx);
+        } catch (Throwable t) {
+            LiquidGlassModule.logErr("auto export failed", t);
+        }
     }
 
     /** Puts the buffer on screen, selectable, so it can be pasted without a cable. */
