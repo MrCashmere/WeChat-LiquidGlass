@@ -534,7 +534,11 @@ final class TabBarBridge {
      *
      * <p>A one-page move is the shape the hosts' own page-change handling was
      * written for — a finger can only ever drag across one boundary — so that
-     * case is simply handed to the pager. Anything longer has to be earned:
+     * case is simply handed to the pager. "One page" means one <em>visible</em>
+     * tab, not one raw page number: a tab hidden from the bar keeps its page,
+     * so the two numberings drift apart and a pair of on-screen neighbours can
+     * look pages apart. {@link #visibleDistance} does that translation and
+     * reports when it cannot. Anything longer has to be earned:
      *
      * <p>WeChat hangs the ActionBar's title visibility and the tab/fragment
      * bookkeeping off {@code onPageScrolled}, keyed on the page and offset the
@@ -599,7 +603,13 @@ final class TabBarBridge {
                     if (current < 0) {
                         return chain.proceed(); // a pager we cannot ask
                     }
-                    int distance = Math.abs(target - current);
+                    int distance = visibleDistance(target, current);
+                    if (distance < 0) {
+                        // A hidden tab whose page does not map onto the visible
+                        // slots: nothing here can tell what the user sees as
+                        // adjacent, so the move is left entirely to the app.
+                        return chain.proceed();
+                    }
                     if (distance == 0) {
                         return chain.proceed(); // the pager's own no-op
                     }
@@ -648,6 +658,47 @@ final class TabBarBridge {
             LiquidGlassModule.log(android.util.Log.WARN,
                     "could not hook the backdrop pager: " + t);
         }
+    }
+
+    /**
+     * How many tabs apart two page numbers are, counted in the tabs the user
+     * can actually see.
+     *
+     * <p>A tab the user has hidden from the bar is still a page in the pager,
+     * so once anything is hidden the two numberings stop agreeing: the bar lays
+     * its tabs out in visible slots while the pager keeps counting pages. QQ's
+     * 频道 is the reported case — with it hidden the bar shows 消息 · 联系人 ·
+     * 动态 while the pager still numbers them 0, 1, 3, so 联系人 → 动态, two
+     * neighbours on screen, reads as a two-page jump and is sent down the
+     * held-back-settles path. That path withholds the {@code onPageScrolled}
+     * callbacks QQ rebuilds its bar state from, and the bar comes back stranded
+     * mid-animation.
+     *
+     * <p>Both sides are therefore translated into visible slots first, which is
+     * the same translation {@link #slotForIndex} already does for the app's own
+     * tab indices. With nothing hidden the guard below returns the raw
+     * difference, which is exactly what this has always been.
+     *
+     * @return pages between the two, or {@code -1} when a tab is hidden and the
+     *     page numbers cannot be mapped onto the visible slots — in which case
+     *     there is no honest answer and the caller must not interfere.
+     */
+    private static int visibleDistance(int target, int current) {
+        ViewGroup tabRow = LiquidGlassInstaller.currentTabRow();
+        if (tabRow == null || tabCount(tabRow) == tabRow.getChildCount()) {
+            return Math.abs(target - current);
+        }
+        int targetSlot = slotForIndex(tabRow, target);
+        int currentSlot = slotForIndex(tabRow, current);
+        if (targetSlot < 0 || currentSlot < 0) {
+            return -1;
+        }
+        LiquidGlassModule.log(android.util.Log.INFO,
+                "hidden tab: page " + current + " -> " + target
+                        + " is slot " + currentSlot + " -> " + targetSlot
+                        + " of " + tabCount(tabRow) + " visible / "
+                        + tabRow.getChildCount() + " laid out");
+        return Math.abs(targetSlot - currentSlot);
     }
 
     /* ---------------- long jump: hold back the intermediate settles -------- */

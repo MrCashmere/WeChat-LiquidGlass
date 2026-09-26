@@ -236,6 +236,16 @@ final class LiquidGlassInstaller {
         return sPagerRef.get();
     }
 
+    /**
+     * The row the droplet is currently bound to, or null before the first
+     * install. The page hooks need it to turn pager page numbers into the
+     * slots the user can actually see — see
+     * {@link TabBarBridge#visibleDistance}.
+     */
+    static ViewGroup currentTabRow() {
+        return sTabRowRef.get();
+    }
+
     private static void install(ViewGroup tabView) {
         ViewGroup parent = tabView.getParent() instanceof ViewGroup
                 ? (ViewGroup) tabView.getParent() : null;
